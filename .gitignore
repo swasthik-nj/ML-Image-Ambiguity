@@ -50,6 +50,8 @@ results/figures/*
 !results/figures/.gitkeep
 results/embeddings/*
 !results/embeddings/.gitkeep
+results/diversity/*
+!results/diversity/.gitkeep
 
 # OS / IDE
 .DS_Store
