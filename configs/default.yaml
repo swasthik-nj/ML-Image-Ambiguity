@@ -1,0 +1,30 @@
+# Default experiment configuration
+# Override any key with environment variables prefixed by IAP_
+# Example: IAP_SAMPLE_SIZE=1000
+
+app_env: development
+debug: true
+log_level: INFO
+random_seed: 42
+
+dataset_dir: dataset
+annotation_file: dataset/annotations/captions_val2017.json
+image_dir: dataset/val2017
+models_dir: models
+results_dir: results
+log_dir: results/logs
+
+experiment_name: image_ambiguity_baseline
+sample_size: 500
+train_ratio: 0.7
+val_ratio: 0.15
+test_ratio: 0.15
+
+api_host: 127.0.0.1
+api_port: 8000
+api_reload: true
+cors_origins:
+  - http://localhost:5173
+
+sentence_model_name: sentence-transformers/all-MiniLM-L6-v2
+device: cpu

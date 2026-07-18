@@ -1,4 +1,66 @@
+# Virtual environments
 .venv/
-dataset/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Dataset artifacts (keep structure via .gitkeep)
+dataset/annotations/
+dataset/val2017/
+dataset/train2017/
+*.zip
+
+# Model / result artifacts (keep folders)
+models/*
+!models/.gitkeep
+results/logs/*
+!results/logs/.gitkeep
+results/metrics/*
+!results/metrics/.gitkeep
+results/figures/*
+!results/figures/.gitkeep
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Office lock / temp files
+myDocs/~$*
+myDocs/~WRL*.tmp
+**/~$*
+**/~WRL*.tmp
+
+# Local tooling
+*.log

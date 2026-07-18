@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "image-ambiguity"
+version = "0.1.0"
+description = "Explainable Image Ambiguity Prediction using caption diversity and CV features."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Research" }
+authors = [{ name = "Image Ambiguity Research Team" }]
+dependencies = [
+  "numpy>=1.26.0",
+  "pandas>=2.1.0",
+  "Pillow>=10.0.0",
+  "matplotlib>=3.8.0",
+  "pycocotools>=2.0.0",
+  "pydantic>=2.5.0",
+  "pydantic-settings>=2.1.0",
+  "PyYAML>=6.0.0",
+  "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+api = ["fastapi>=0.109.0", "uvicorn[standard]>=0.27.0"]
+ml = [
+  "scikit-learn>=1.3.0",
+  "opencv-python>=4.8.0",
+  "sentence-transformers>=2.2.0",
+  "transformers>=4.36.0",
+  "torch>=2.1.0",
+  "shap>=0.43.0",
+]
+dev = ["pytest>=8.0.0", "pytest-cov>=4.1.0", "ruff>=0.1.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
