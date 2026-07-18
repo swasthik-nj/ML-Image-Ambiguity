@@ -140,6 +140,8 @@ class TestCaptionDiversityAnalyzer:
         fake_pyplot.show = MagicMock()
         fake_matplotlib = ModuleType("matplotlib")
         fake_matplotlib.pyplot = fake_pyplot
+        fake_matplotlib.get_backend = MagicMock(return_value="agg")
+        fake_matplotlib.use = MagicMock()
 
         with patch.dict(
             sys.modules,

@@ -55,6 +55,8 @@ results/diversity/*
 !results/diversity/.gitkeep
 results/cv_features/*
 !results/cv_features/.gitkeep
+results/labels/*
+!results/labels/.gitkeep
 
 # OS / IDE
 .DS_Store
