@@ -7,11 +7,13 @@ from image_ambiguity.features.caption_diversity import (
 )
 from image_ambiguity.features.cv_features import OpenCVFeatureExtractor
 from image_ambiguity.features.sentence_embeddings import SentenceEmbeddingGenerator
+from image_ambiguity.pipeline.dataset_builder import MLDatasetBuilder
 
 __all__ = [
     "CaptionDiversityAnalyzer",
     "CocoDatasetLoader",
     "DiversityMetrics",
+    "MLDatasetBuilder",
     "OpenCVFeatureExtractor",
     "SentenceEmbeddingGenerator",
 ]

@@ -37,6 +37,7 @@ htmlcov/
 dataset/annotations/
 dataset/val2017/
 dataset/train2017/
+dataset/human_dataset.csv
 *.zip
 
 # Model / result artifacts (keep folders)
