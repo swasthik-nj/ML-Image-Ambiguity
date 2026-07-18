@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     models_dir: Path = PROJECT_ROOT / "models"
     results_dir: Path = PROJECT_ROOT / "results"
     log_dir: Path = PROJECT_ROOT / "results" / "logs"
+    embeddings_dir: Path = PROJECT_ROOT / "results" / "embeddings"
 
     # Experiment
     experiment_name: str = "image_ambiguity_baseline"
@@ -99,7 +100,8 @@ class Settings(BaseSettings):
 
     # Model / feature defaults
     sentence_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
-    device: str = "cpu"
+    device: str = "auto"
+    embedding_batch_size: int = Field(default=32, ge=1)
 
     @field_validator(
         "project_root",
@@ -110,6 +112,7 @@ class Settings(BaseSettings):
         "models_dir",
         "results_dir",
         "log_dir",
+        "embeddings_dir",
         mode="before",
     )
     @classmethod
@@ -138,7 +141,12 @@ class Settings(BaseSettings):
 
     def ensure_directories(self) -> None:
         """Create writable artifact directories if they do not exist."""
-        for path in (self.models_dir, self.results_dir, self.log_dir):
+        for path in (
+            self.models_dir,
+            self.results_dir,
+            self.log_dir,
+            self.embeddings_dir,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
 

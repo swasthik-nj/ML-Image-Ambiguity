@@ -48,6 +48,8 @@ results/metrics/*
 !results/metrics/.gitkeep
 results/figures/*
 !results/figures/.gitkeep
+results/embeddings/*
+!results/embeddings/.gitkeep
 
 # OS / IDE
 .DS_Store

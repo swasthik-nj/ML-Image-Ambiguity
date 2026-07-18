@@ -13,6 +13,7 @@ image_dir: dataset/val2017
 models_dir: models
 results_dir: results
 log_dir: results/logs
+embeddings_dir: results/embeddings
 
 experiment_name: image_ambiguity_baseline
 sample_size: 500
@@ -27,4 +28,5 @@ cors_origins:
   - http://localhost:5173
 
 sentence_model_name: sentence-transformers/all-MiniLM-L6-v2
-device: cpu
+device: auto
+embedding_batch_size: 32
