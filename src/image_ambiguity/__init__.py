@@ -1,6 +1,11 @@
 """Explainable Image Ambiguity Prediction research package."""
 
 from image_ambiguity.data.coco_loader import CocoDatasetLoader
+from image_ambiguity.features.blip_captions import (
+    BlipCaptionGenerator,
+    BlipCaptionResult,
+    CaptionComparison,
+)
 from image_ambiguity.features.caption_diversity import (
     CaptionDiversityAnalyzer,
     DiversityMetrics,
@@ -13,6 +18,9 @@ from image_ambiguity.pipeline.label_generator import AmbiguityLabelGenerator
 
 __all__ = [
     "AmbiguityLabelGenerator",
+    "BlipCaptionGenerator",
+    "BlipCaptionResult",
+    "CaptionComparison",
     "CaptionDiversityAnalyzer",
     "CocoDatasetLoader",
     "DiversityMetrics",
