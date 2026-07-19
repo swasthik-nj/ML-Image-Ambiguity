@@ -1,0 +1,88 @@
+{
+  "image_id": 397133,
+  "file_name": "000000397133.jpg",
+  "model": "Salesforce/blip-image-captioning-base",
+  "device": "cpu",
+  "generated_captions": {
+    "beam_search": [
+      "a woman standing in a kitchen",
+      "a woman in a kitchen",
+      "two people in a kitchen"
+    ],
+    "top_k": [
+      "a large wooden kitchen table",
+      "the man ' s coat of white",
+      "a woman standing in kitchen"
+    ],
+    "nucleus": [
+      "three pots hanging in a wall",
+      "three people in a kitchen",
+      "a large wooden cutting board"
+    ]
+  },
+  "coco_captions": [
+    "A man is in a kitchen making pizzas.",
+    "Man in apron standing on front of oven with pans and bakeware",
+    "A baker is working in the kitchen rolling dough.",
+    "A person standing by a stove in a kitchen.",
+    "A table with pies being made and a person standing near a wall with pots and pans hanging on the wall."
+  ],
+  "comparison": {
+    "n_coco": 5,
+    "n_generated": 9,
+    "exact_matches": [],
+    "best_overlaps": {
+      "beam_search": [
+        {
+          "generated": "a woman standing in a kitchen",
+          "best_coco": "A person standing by a stove in a kitchen.",
+          "jaccard": 0.5
+        },
+        {
+          "generated": "a woman in a kitchen",
+          "best_coco": "A man is in a kitchen making pizzas.",
+          "jaccard": 0.375
+        },
+        {
+          "generated": "two people in a kitchen",
+          "best_coco": "A man is in a kitchen making pizzas.",
+          "jaccard": 0.3333
+        }
+      ],
+      "top_k": [
+        {
+          "generated": "a large wooden kitchen table",
+          "best_coco": "A man is in a kitchen making pizzas.",
+          "jaccard": 0.2
+        },
+        {
+          "generated": "the man ' s coat of white",
+          "best_coco": "Man in apron standing on front of oven with pans and bakeware",
+          "jaccard": 0.125
+        },
+        {
+          "generated": "a woman standing in kitchen",
+          "best_coco": "A person standing by a stove in a kitchen.",
+          "jaccard": 0.5
+        }
+      ],
+      "nucleus": [
+        {
+          "generated": "three pots hanging in a wall",
+          "best_coco": "A table with pies being made and a person standing near a wall with pots and pans hanging on the wall.",
+          "jaccard": 0.2222
+        },
+        {
+          "generated": "three people in a kitchen",
+          "best_coco": "A man is in a kitchen making pizzas.",
+          "jaccard": 0.3333
+        },
+        {
+          "generated": "a large wooden cutting board",
+          "best_coco": "A man is in a kitchen making pizzas.",
+          "jaccard": 0.0909
+        }
+      ]
+    }
+  }
+}
