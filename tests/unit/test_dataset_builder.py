@@ -74,6 +74,18 @@ class TestMLDatasetBuilder:
         assert set(df["image_id"]) == {1, 2}
         assert df["image_id"].dtype == np.int64
 
+    def test_build_accepts_injected_captions(
+        self, builder: MLDatasetBuilder
+    ) -> None:
+        captions = {
+            1: ["a red bike on the road", "a bicycle parked outside"],
+            2: ["a cat on a sofa", "a kitten resting indoors"],
+        }
+        df = builder.build(image_ids=[1, 2], captions_by_image=captions)
+        assert len(df) == 2
+        assert df["caption_diversity"].notna().all()
+        assert (df["caption_diversity"] >= 0).all()
+
     def test_build_has_no_missing_values_after_impute(
         self, builder: MLDatasetBuilder
     ) -> None:

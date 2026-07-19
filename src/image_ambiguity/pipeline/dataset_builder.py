@@ -106,6 +106,7 @@ class MLDatasetBuilder:
         *,
         sample_size: int | None = DEFAULT_SAMPLE_SIZE,
         seed: int | None = 42,
+        captions_by_image: dict[int, list[str]] | None = None,
     ) -> pd.DataFrame:
         """Build the merged dataset.
 
@@ -115,6 +116,9 @@ class MLDatasetBuilder:
             sample_size: Number of images to sample when ``image_ids`` is
                 not provided.
             seed: Random seed for reproducible sampling.
+            captions_by_image: Optional precomputed captions keyed by image
+                id (e.g. BLIP AI captions). When provided, COCO human
+                captions are not loaded for diversity features.
 
         Returns:
             DataFrame with one row per image and columns from
@@ -130,8 +134,15 @@ class MLDatasetBuilder:
             else self.select_image_ids(sample_size, seed)
         )
 
-        captions_by_image = self._collect_captions(ids)
-        embeddings_by_image = self._encode_all_captions(captions_by_image)
+        resolved_captions = (
+            {
+                int(image_id): list(captions_by_image.get(int(image_id), []))
+                for image_id in ids
+            }
+            if captions_by_image is not None
+            else self._collect_captions(ids)
+        )
+        embeddings_by_image = self._encode_all_captions(resolved_captions)
 
         rows: list[dict[str, Any]] = []
         with timed(f"build_dataset:n={len(ids)}"):
@@ -142,7 +153,7 @@ class MLDatasetBuilder:
                 rows.append(
                     self._build_row(
                         image_id,
-                        captions_by_image.get(image_id, []),
+                        resolved_captions.get(image_id, []),
                         embeddings_by_image.get(image_id),
                     )
                 )
