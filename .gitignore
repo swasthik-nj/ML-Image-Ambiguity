@@ -57,8 +57,6 @@ results/cv_features/*
 !results/cv_features/.gitkeep
 results/labels/*
 !results/labels/.gitkeep
-results/explanations/*
-!results/explanations/.gitkeep
 
 # OS / IDE
 .DS_Store

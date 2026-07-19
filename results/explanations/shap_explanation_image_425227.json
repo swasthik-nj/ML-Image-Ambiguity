@@ -1,0 +1,34 @@
+{
+  "image_id": 425227,
+  "row_index": 187,
+  "predicted_class": "High",
+  "predicted_probability": 0.72,
+  "base_value": 0.011541666666666676,
+  "contributions": [
+    {
+      "feature": "caption_diversity",
+      "value": 0.7188909608669329,
+      "shap_value": 0.2072682955813376
+    },
+    {
+      "feature": "average_similarity",
+      "value": 0.281109039133067,
+      "shap_value": 0.17437988951116182
+    },
+    {
+      "feature": "minimum_similarity",
+      "value": -0.0001456476631494,
+      "shap_value": 0.15305918563268156
+    },
+    {
+      "feature": "std_similarity",
+      "value": 0.3589931557784225,
+      "shap_value": 0.09468131580645313
+    },
+    {
+      "feature": "entropy",
+      "value": 6.324903080970444,
+      "shap_value": 0.02548891101236952
+    }
+  ]
+}
