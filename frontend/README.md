@@ -1,16 +1,37 @@
-# Frontend
+# Ambiguity Lens (React frontend)
 
-Placeholder for the research demo UI (e.g. React/Vite).
+Modern React UI for the Image Ambiguity Prediction API.
 
-## Planned screens
+## Pages
 
-- Image upload / COCO image selector
-- Caption diversity panel (human vs AI)
-- Ambiguity score + explanation view
+- **Home** — brand landing
+- **Prediction** — upload image, captions / BLIP, ambiguity + SHAP charts
+- **Comparison** — human vs AI caption diversity charts
+- **About** — project stack and run instructions
 
-Scaffold the UI with your preferred stack when ready:
+## Stack
+
+- React + TypeScript + Vite
+- Tailwind CSS v4
+- Recharts
+- React Router
+
+## Run
+
+From the `frontend/` folder:
 
 ```bash
-# example (from repo root)
-npm create vite@latest frontend -- --template react-ts
+npm install
+npm run dev
 ```
+
+Open http://localhost:5173
+
+Start the API in another terminal (project root):
+
+```powershell
+$env:PYTHONPATH="src;."
+uvicorn app:app --reload
+```
+
+Vite proxies `/api/*` → `http://127.0.0.1:8000/*`.
