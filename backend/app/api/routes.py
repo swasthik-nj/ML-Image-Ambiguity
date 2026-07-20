@@ -9,12 +9,14 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
 from backend.app.schemas import (
+    CompareResponse,
     ErrorResponse,
     ExplainResponse,
     FeaturesResponse,
     PredictionResponse,
     UploadResponse,
 )
+from backend.app.services.compare import compare_datasets
 from backend.app.services.inference import (
     AmbiguityInferenceService,
     get_inference_service,
@@ -142,6 +144,17 @@ async def _resolve_image(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="Provide an image file upload or an existing upload_id",
     )
+
+
+@router.get(
+    "/compare",
+    response_model=CompareResponse,
+    summary="Compare human vs AI caption diversity",
+)
+def compare_human_ai() -> CompareResponse:
+    """Return mean caption diversity and histograms from dataset CSVs."""
+    payload = compare_datasets()
+    return CompareResponse(**payload)
 
 
 @router.post(

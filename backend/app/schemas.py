@@ -91,3 +91,21 @@ class ExplainResponse(PredictionResponse):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class HistogramBin(BaseModel):
+    bin: str
+    count: int
+
+
+class CompareResponse(BaseModel):
+    human_diversity: float | None
+    ai_diversity: float | None
+    n_human: int
+    n_ai: int
+    n_compared: int
+    human_available: bool
+    ai_available: bool
+    message: str
+    human_histogram: list[HistogramBin] = Field(default_factory=list)
+    ai_histogram: list[HistogramBin] = Field(default_factory=list)

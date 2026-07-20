@@ -53,5 +53,13 @@ def root() -> RootResponse:
         project="Explainable Image Ambiguity Prediction",
         docs="/docs",
         health="/health",
-        endpoints=["/upload", "/features", "/predict", "/explain", "/health", "/docs"],
+        endpoints=[
+            "/upload",
+            "/features",
+            "/predict",
+            "/explain",
+            "/compare",
+            "/health",
+            "/docs",
+        ],
     )

@@ -73,3 +73,5 @@ myDocs/~WRL*.tmp
 
 # Local tooling
 *.log
+
+node_modules/
