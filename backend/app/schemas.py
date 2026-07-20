@@ -27,6 +27,8 @@ class UploadResponse(BaseModel):
     width: int
     height: int
     mode: str
+    coco_image_id: int | None = None
+    coco_captions: list[str] = Field(default_factory=list)
     message: str = "Image uploaded successfully"
 
 
@@ -51,6 +53,10 @@ class CaptionDiversityFeatures(BaseModel):
 
 class FeaturesResponse(BaseModel):
     upload_id: str | None = None
+    caption_source: str = Field(
+        default="user",
+        description="Caption origin: user, coco_human, or blip",
+    )
     opencv_features: OpenCVFeatures
     caption_diversity: CaptionDiversityFeatures
     captions: list[str]
@@ -64,6 +70,10 @@ class PredictionResponse(BaseModel):
     )
     confidence: float
     probabilities: dict[str, float]
+    caption_source: str = Field(
+        default="user",
+        description="Caption origin: user, coco_human, or blip",
+    )
     caption_diversity: CaptionDiversityFeatures
     opencv_features: OpenCVFeatures
     captions: list[str]

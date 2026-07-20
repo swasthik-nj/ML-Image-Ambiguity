@@ -183,6 +183,8 @@ async def upload_image(
         width=meta["width"],
         height=meta["height"],
         mode=meta["mode"],
+        coco_image_id=meta.get("coco_image_id"),
+        coco_captions=list(meta.get("coco_captions") or []),
     )
 
 
@@ -212,10 +214,14 @@ async def extract_features(
         Form(
             description=(
                 'Optional JSON array of captions, e.g. ["cap1","cap2"]. '
-                "If omitted, BLIP generates captions automatically."
+                "If omitted, uses COCO human captions when available, else BLIP."
             ),
         ),
     ] = None,
+    force_blip: Annotated[
+        bool,
+        Form(description="Force BLIP even when COCO human captions exist"),
+    ] = False,
 ) -> FeaturesResponse:
     """Return OpenCV features and caption-diversity metrics for an image."""
     image_path, resolved_upload_id = await _resolve_image(
@@ -223,12 +229,18 @@ async def extract_features(
     )
     parsed_captions = _parse_captions(captions)
     try:
-        payload = service.extract_features(image_path, captions=parsed_captions)
+        payload = service.extract_features(
+            image_path,
+            captions=parsed_captions,
+            upload_id=resolved_upload_id,
+            force_blip=force_blip,
+        )
     except Exception as exc:  # noqa: BLE001 - map domain errors to HTTP
         raise _http_error(exc) from exc
 
     return FeaturesResponse(
         upload_id=resolved_upload_id,
+        caption_source=payload["caption_source"],
         opencv_features=payload["opencv_features"],
         caption_diversity=payload["caption_diversity"],
         captions=payload["captions"],
@@ -262,10 +274,14 @@ async def predict_ambiguity(
         Form(
             description=(
                 'Optional JSON array of captions, e.g. ["cap1","cap2"]. '
-                "If omitted, BLIP generates captions automatically."
+                "If omitted, uses COCO human captions when available, else BLIP."
             ),
         ),
     ] = None,
+    force_blip: Annotated[
+        bool,
+        Form(description="Force BLIP even when COCO human captions exist"),
+    ] = False,
 ) -> PredictionResponse:
     """Predict Low/Medium/High ambiguity and return supporting features."""
     image_path, resolved_upload_id = await _resolve_image(
@@ -273,7 +289,12 @@ async def predict_ambiguity(
     )
     parsed_captions = _parse_captions(captions)
     try:
-        payload = service.predict(image_path, captions=parsed_captions)
+        payload = service.predict(
+            image_path,
+            captions=parsed_captions,
+            upload_id=resolved_upload_id,
+            force_blip=force_blip,
+        )
     except Exception as exc:  # noqa: BLE001
         raise _http_error(exc) from exc
 
@@ -282,6 +303,7 @@ async def predict_ambiguity(
         predicted_ambiguity=payload["predicted_ambiguity"],
         confidence=payload["confidence"],
         probabilities=payload["probabilities"],
+        caption_source=payload["caption_source"],
         caption_diversity=payload["caption_diversity"],
         opencv_features=payload["opencv_features"],
         captions=payload["captions"],
@@ -315,10 +337,14 @@ async def explain_prediction(
         Form(
             description=(
                 'Optional JSON array of captions, e.g. ["cap1","cap2"]. '
-                "If omitted, BLIP generates captions automatically."
+                "If omitted, uses COCO human captions when available, else BLIP."
             ),
         ),
     ] = None,
+    force_blip: Annotated[
+        bool,
+        Form(description="Force BLIP even when COCO human captions exist"),
+    ] = False,
     top_n: Annotated[
         int,
         Form(description="Number of top SHAP contributions to highlight", ge=1, le=20),
@@ -331,7 +357,11 @@ async def explain_prediction(
     parsed_captions = _parse_captions(captions)
     try:
         payload = service.explain(
-            image_path, captions=parsed_captions, top_n=top_n
+            image_path,
+            captions=parsed_captions,
+            upload_id=resolved_upload_id,
+            force_blip=force_blip,
+            top_n=top_n,
         )
     except Exception as exc:  # noqa: BLE001
         raise _http_error(exc) from exc
@@ -341,6 +371,7 @@ async def explain_prediction(
         predicted_ambiguity=payload["predicted_ambiguity"],
         confidence=payload["confidence"],
         probabilities=payload["probabilities"],
+        caption_source=payload["caption_source"],
         caption_diversity=payload["caption_diversity"],
         opencv_features=payload["opencv_features"],
         captions=payload["captions"],

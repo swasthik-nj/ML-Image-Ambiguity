@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -12,6 +13,7 @@ import pandas as pd
 from PIL import Image
 
 from image_ambiguity.config import Settings, get_settings
+from image_ambiguity.data.coco_loader import CocoDatasetLoader
 from image_ambiguity.features.blip_captions import (
     ALL_STRATEGIES,
     BlipCaptionGenerator,
@@ -26,6 +28,10 @@ from image_ambiguity.utils.common import ensure_dir
 logger = get_logger("backend.services.inference")
 
 ALLOWED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+COCO_FILENAME_RE = re.compile(
+    r"(?:^|[/\\])0*(\d{1,12})\.(?:jpe?g|png|bmp|webp)$",
+    re.IGNORECASE,
+)
 CV_FEATURE_KEYS = (
     "edge_density",
     "entropy",
@@ -36,15 +42,42 @@ CV_FEATURE_KEYS = (
 )
 
 
+def parse_coco_image_id(filename: str | None) -> int | None:
+    """Extract a COCO image id from names like ``000000538236.jpg``."""
+    if not filename:
+        return None
+    match = COCO_FILENAME_RE.search(str(filename).strip())
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
+
+
 def flatten_blip_captions(generated: dict[str, list[str]]) -> list[str]:
     """Flatten BLIP strategy outputs into a unique ordered caption list."""
     seen: set[str] = set()
     captions: list[str] = []
-    for strategy in ALL_STRATEGIES:
+    # Prefer prompted captions first — they tend to be more diverse.
+    ordered_keys = ("prompted",) + tuple(
+        key for key in ALL_STRATEGIES if key in generated
+    )
+    for strategy in ordered_keys:
         for caption in generated.get(strategy, []):
             text = " ".join(str(caption).strip().split())
-            if text and text not in seen:
-                seen.add(text)
+            key = text.lower()
+            if text and key not in seen:
+                seen.add(key)
+                captions.append(text)
+    for strategy, items in generated.items():
+        if strategy in ordered_keys:
+            continue
+        for caption in items:
+            text = " ".join(str(caption).strip().split())
+            key = text.lower()
+            if text and key not in seen:
+                seen.add(key)
                 captions.append(text)
     return captions
 
@@ -64,7 +97,10 @@ class AmbiguityInferenceService:
         )
         self.blip_generator = BlipCaptionGenerator(
             device=self.settings.device,
-            num_return_sequences=2,
+            num_return_sequences=4,
+            temperature=1.35,
+            top_p=0.85,
+            top_k=60,
         )
         self.trainer = ModelTrainer()
         self._model: Any | None = None
@@ -72,6 +108,7 @@ class AmbiguityInferenceService:
         self._embeddings_loaded = False
         self._blip_loaded = False
         self._shap_explainer: Any | None = None
+        self._coco_loader: CocoDatasetLoader | None = None
 
     @property
     def model_path(self) -> Path:
@@ -123,6 +160,59 @@ class AmbiguityInferenceService:
             self.blip_generator.load_model()
             self._blip_loaded = True
 
+    def _ensure_coco(self) -> CocoDatasetLoader | None:
+        """Lazy-load COCO captions; return None if annotations are unavailable."""
+        if self._coco_loader is not None:
+            return self._coco_loader
+        annotation = self.settings.annotation_file
+        image_dir = self.settings.image_dir
+        if not Path(annotation).is_file() or not Path(image_dir).is_dir():
+            logger.warning("COCO annotations/images unavailable; skipping lookup")
+            return None
+        loader = CocoDatasetLoader(annotation, image_dir)
+        loader.load_annotations()
+        self._coco_loader = loader
+        return loader
+
+    def lookup_coco_captions(
+        self,
+        *,
+        filename: str | None = None,
+        image_id: int | None = None,
+    ) -> list[str]:
+        """Return human COCO captions for a filename or image id."""
+        resolved_id = image_id if image_id is not None else parse_coco_image_id(filename)
+        if resolved_id is None:
+            return []
+        loader = self._ensure_coco()
+        if loader is None:
+            return []
+        try:
+            captions = loader.get_captions(int(resolved_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("COCO caption lookup failed for id=%s (%s)", resolved_id, exc)
+            return []
+        cleaned = [" ".join(str(c).strip().split()) for c in captions if str(c).strip()]
+        # Preserve order, drop exact duplicates.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for caption in cleaned:
+            key = caption.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(caption)
+        return unique
+
+    def read_upload_meta(self, upload_id: str) -> dict[str, Any] | None:
+        meta_path = self.upload_dir / f"{upload_id}.json"
+        if not meta_path.is_file():
+            return None
+        try:
+            return json.loads(meta_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None
+
     def _ensure_shap(self) -> Any:
         if self._shap_explainer is None:
             from image_ambiguity.explainability.shap_explainer import SHAPExplainer
@@ -161,15 +251,24 @@ class AmbiguityInferenceService:
             width, height = image.size
             mode = image.mode
 
+        original_name = Path(filename).name if filename else path.name
+        coco_image_id = parse_coco_image_id(original_name)
+        coco_captions = (
+            self.lookup_coco_captions(image_id=coco_image_id)
+            if coco_image_id is not None
+            else []
+        )
         meta = {
             "upload_id": upload_id,
-            "filename": Path(filename).name if filename else path.name,
+            "filename": original_name,
             "content_type": f"image/{suffix.lstrip('.')}",
             "path": str(path),
             "size_bytes": len(data),
             "width": width,
             "height": height,
             "mode": mode,
+            "coco_image_id": coco_image_id,
+            "coco_captions": coco_captions,
         }
         (self.upload_dir / f"{upload_id}.json").write_text(
             json.dumps(meta, indent=2),
@@ -205,7 +304,7 @@ class AmbiguityInferenceService:
         return image_matches[0]
 
     def generate_captions(self, image_path: Path) -> list[str]:
-        """Generate BLIP captions for an image."""
+        """Generate diverse BLIP captions for an image."""
         self._ensure_blip()
         with Image.open(image_path) as image:
             rgb = image.convert("RGB")
@@ -216,6 +315,39 @@ class AmbiguityInferenceService:
                 "BLIP produced fewer than 2 captions; cannot compute diversity"
             )
         return captions
+
+    def resolve_captions(
+        self,
+        image_path: Path,
+        *,
+        captions: Sequence[str] | None = None,
+        upload_id: str | None = None,
+        force_blip: bool = False,
+    ) -> tuple[list[str], str]:
+        """Choose user, COCO-human, or BLIP captions.
+
+        Returns:
+            ``(captions, source)`` where source is ``user``, ``coco_human``,
+            or ``blip``.
+        """
+        if captions is not None and len(captions) >= 2:
+            return list(captions), "user"
+
+        if not force_blip:
+            meta = self.read_upload_meta(upload_id) if upload_id else None
+            filename = (meta or {}).get("filename") or image_path.name
+            coco_captions = list((meta or {}).get("coco_captions") or [])
+            if len(coco_captions) < 2:
+                coco_captions = self.lookup_coco_captions(filename=str(filename))
+            if len(coco_captions) >= 2:
+                logger.info(
+                    "Using %s COCO human captions for %s",
+                    len(coco_captions),
+                    filename,
+                )
+                return coco_captions, "coco_human"
+
+        return self.generate_captions(image_path), "blip"
 
     def compute_opencv_features(self, image_path: Path) -> dict[str, float]:
         """Extract the OpenCV features used by the classifier."""
@@ -265,16 +397,22 @@ class AmbiguityInferenceService:
         image_path: Path,
         *,
         captions: Sequence[str] | None = None,
+        upload_id: str | None = None,
+        force_blip: bool = False,
     ) -> dict[str, Any]:
         """Return OpenCV + caption-diversity features for one image."""
-        resolved_captions = (
-            list(captions) if captions is not None else self.generate_captions(image_path)
+        resolved_captions, caption_source = self.resolve_captions(
+            image_path,
+            captions=captions,
+            upload_id=upload_id,
+            force_blip=force_blip,
         )
         opencv = self.compute_opencv_features(image_path)
         diversity = self.compute_diversity_features(resolved_captions)
         feature_row = self.build_feature_row(diversity=diversity, opencv=opencv)
         return {
             "image_path": str(image_path),
+            "caption_source": caption_source,
             "opencv_features": opencv,
             "caption_diversity": {
                 key: diversity[key]
@@ -313,15 +451,23 @@ class AmbiguityInferenceService:
         image_path: Path,
         *,
         captions: Sequence[str] | None = None,
+        upload_id: str | None = None,
+        force_blip: bool = False,
     ) -> dict[str, Any]:
         """Full prediction payload for an image."""
-        features = self.extract_features(image_path, captions=captions)
+        features = self.extract_features(
+            image_path,
+            captions=captions,
+            upload_id=upload_id,
+            force_blip=force_blip,
+        )
         feature_row = pd.DataFrame(
             [features["feature_vector"]], columns=list(FEATURE_COLUMNS)
         )
         prediction = self.predict_from_features(feature_row)
         return {
             **prediction,
+            "caption_source": features["caption_source"],
             "caption_diversity": features["caption_diversity"],
             "opencv_features": features["opencv_features"],
             "captions": features["captions"],
@@ -333,10 +479,17 @@ class AmbiguityInferenceService:
         image_path: Path,
         *,
         captions: Sequence[str] | None = None,
+        upload_id: str | None = None,
+        force_blip: bool = False,
         top_n: int = 5,
     ) -> dict[str, Any]:
         """Prediction plus SHAP feature contributions."""
-        prediction = self.predict(image_path, captions=captions)
+        prediction = self.predict(
+            image_path,
+            captions=captions,
+            upload_id=upload_id,
+            force_blip=force_blip,
+        )
         feature_row = pd.DataFrame(
             [prediction["feature_vector"]], columns=list(FEATURE_COLUMNS)
         )

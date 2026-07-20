@@ -75,3 +75,4 @@ myDocs/~WRL*.tmp
 *.log
 
 node_modules/
+results/uploads/*
