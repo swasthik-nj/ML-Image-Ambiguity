@@ -34,6 +34,7 @@ from sklearn.model_selection import (
     cross_val_score,
     train_test_split,
 )
+from sklearn.utils import resample
 
 from image_ambiguity.logging_config import get_logger
 from image_ambiguity.utils.common import ensure_dir, timed
@@ -117,6 +118,7 @@ class ModelTrainer:
         cv_folds: int = 5,
         scoring: str = "accuracy",
         random_state: int = 42,
+        balance_classes: bool = True,
     ) -> None:
         if not (0.0 < test_size < 1.0):
             raise ValueError(f"test_size must be in (0, 1), got {test_size}")
@@ -127,6 +129,7 @@ class ModelTrainer:
         self.cv_folds = cv_folds
         self.scoring = scoring
         self.random_state = random_state
+        self.balance_classes = balance_classes
 
     # ------------------------------------------------------------------
     # Data preparation
@@ -250,7 +253,11 @@ class ModelTrainer:
 
     def _build_estimator(self, name: str, **overrides: Any) -> Any:
         if name == "random_forest":
-            params: dict[str, Any] = {"random_state": self.random_state, "n_jobs": -1}
+            params: dict[str, Any] = {
+                "random_state": self.random_state,
+                "n_jobs": -1,
+                "class_weight": "balanced" if self.balance_classes else None,
+            }
             params.update(overrides)
             return RandomForestClassifier(**params)
         if name == "xgboost":
@@ -264,6 +271,47 @@ class ModelTrainer:
             params.update(overrides)
             return XGBClassifier(**params)
         raise ValueError(f"Unknown model name: {name!r}")
+
+    def balance_training_data(
+        self,
+        X_train: pd.DataFrame,
+        y_train: pd.Series,
+    ) -> tuple[pd.DataFrame, pd.Series]:
+        """Oversample minority classes in the training split only.
+
+        Each class is resampled with replacement up to the majority-class
+        count so High is not drowned out by Medium during fitting.
+        """
+        if not self.balance_classes:
+            return X_train, y_train
+
+        frame = X_train.copy()
+        frame["__label__"] = y_train.to_numpy()
+        counts = frame["__label__"].value_counts()
+        target = int(counts.max())
+        parts: list[pd.DataFrame] = []
+        for label, count in counts.items():
+            part = frame[frame["__label__"] == label]
+            if count < target:
+                part = resample(
+                    part,
+                    replace=True,
+                    n_samples=target,
+                    random_state=self.random_state,
+                )
+            parts.append(part)
+
+        balanced = pd.concat(parts, ignore_index=True)
+        balanced = balanced.sample(frac=1.0, random_state=self.random_state)
+        y_balanced = balanced["__label__"].astype(y_train.dtype)
+        x_balanced = balanced.drop(columns=["__label__"])
+        logger.info(
+            "Balanced training set: %s -> %s rows; class counts=%s",
+            len(X_train),
+            len(x_balanced),
+            y_balanced.value_counts().sort_index().to_dict(),
+        )
+        return x_balanced, y_balanced
 
     def cross_validate_baseline(
         self, name: str, X_train: pd.DataFrame, y_train: pd.Series
@@ -429,6 +477,7 @@ class ModelTrainer:
             (1 - self.test_size) * 100,
             self.test_size * 100,
         )
+        X_train, y_train = self.balance_training_data(X_train, y_train)
 
         results: dict[str, ModelResult] = {}
         for name in PARAM_GRIDS:

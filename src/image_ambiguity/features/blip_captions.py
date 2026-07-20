@@ -28,6 +28,15 @@ STRATEGY_TOP_K = "top_k"
 STRATEGY_NUCLEUS = "nucleus"
 ALL_STRATEGIES = (STRATEGY_BEAM, STRATEGY_TOP_K, STRATEGY_NUCLEUS)
 
+# Different text prompts push BLIP toward paraphrases instead of near-duplicates.
+DIVERSITY_PROMPTS: tuple[str, ...] = (
+    "",
+    "a photo of",
+    "an image of",
+    "this picture shows",
+    "a scene with",
+)
+
 
 @dataclass(slots=True)
 class CaptionComparison:
@@ -249,11 +258,19 @@ class BlipCaptionGenerator:
             self._torch = torch
         return self.processor, self.model, self._torch
 
-    def _prepare_inputs(self, image: Image.Image) -> dict[str, Any]:
+    def _prepare_inputs(
+        self,
+        image: Image.Image,
+        *,
+        text: str | None = None,
+    ) -> dict[str, Any]:
         processor, _, _ = self._require_model()
         if image.mode != "RGB":
             image = image.convert("RGB")
-        inputs = processor(images=image, return_tensors="pt")
+        if text:
+            inputs = processor(images=image, text=text, return_tensors="pt")
+        else:
+            inputs = processor(images=image, return_tensors="pt")
         return {key: value.to(self.device) for key, value in inputs.items()}
 
     def _decode(self, sequences: Any) -> list[str]:
@@ -263,9 +280,16 @@ class BlipCaptionGenerator:
         captions: list[str] = []
         for text in texts:
             caption = " ".join(text.strip().split())
-            if not caption or caption in seen:
+            # Drop prompt prefixes that sometimes leak into the decode.
+            for prompt in DIVERSITY_PROMPTS:
+                if prompt and caption.lower().startswith(prompt.lower()):
+                    caption = caption[len(prompt) :].strip(" :,-")
+            if not caption:
                 continue
-            seen.add(caption)
+            key = caption.lower()
+            if key in seen:
+                continue
+            seen.add(key)
             captions.append(caption)
         return captions
 
@@ -315,6 +339,34 @@ class BlipCaptionGenerator:
             )
         return self._decode(sequences)
 
+    def generate_prompted(self, image: Image.Image) -> list[str]:
+        """Generate captions conditioned on several prompts for more diversity."""
+        _, model, torch = self._require_model()
+        captions: list[str] = []
+        for prompt in DIVERSITY_PROMPTS:
+            inputs = self._prepare_inputs(image, text=prompt or None)
+            with torch.inference_mode():
+                sequences = model.generate(
+                    **inputs,
+                    max_length=self.max_length,
+                    do_sample=True,
+                    top_p=self.top_p,
+                    top_k=self.top_k,
+                    temperature=self.temperature,
+                    num_return_sequences=1,
+                )
+            captions.extend(self._decode(sequences))
+        # Re-dedupe across prompts.
+        seen: set[str] = set()
+        unique: list[str] = []
+        for caption in captions:
+            key = caption.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(caption)
+        return unique
+
     def generate_all(
         self,
         image: Image.Image,
@@ -348,6 +400,12 @@ class BlipCaptionGenerator:
                 strategy,
                 len(results[strategy]),
             )
+        with timed("blip_generate:prompted"):
+            results["prompted"] = self.generate_prompted(image)
+        logger.info(
+            "Strategy prompted produced %s caption(s)",
+            len(results["prompted"]),
+        )
         return results
 
     def caption_image(

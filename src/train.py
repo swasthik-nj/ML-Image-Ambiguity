@@ -73,8 +73,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--select-by",
         choices=["accuracy", "precision", "recall", "f1", "roc_auc"],
-        default="accuracy",
-        help="Metric used to choose the best model to save (default: accuracy)",
+        default="f1",
+        help="Metric used to choose the best model to save (default: f1)",
+    )
+    parser.add_argument(
+        "--balance-classes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Oversample minority classes in the training split (default: on)",
     )
     return parser.parse_args()
 
@@ -112,12 +118,17 @@ def main() -> None:
     trainer = ModelTrainer(
         test_size=args.test_size,
         cv_folds=args.cv_folds,
+        balance_classes=args.balance_classes,
     )
     df = trainer.load_dataset(args.input)
     results = trainer.train(df)
 
     print("Training complete")
     print(f"Dataset: {args.input} ({len(df)} rows)")
+    if "ambiguity_label" in df.columns:
+        print("Label counts:")
+        print(df["ambiguity_label"].value_counts().to_string())
+    print(f"Class balancing: {'on' if args.balance_classes else 'off'}")
     print()
     for result in results.values():
         print_result(result)
