@@ -76,3 +76,4 @@ myDocs/~WRL*.tmp
 
 node_modules/
 results/uploads/*
+results/captions/
