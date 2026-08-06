@@ -1,5 +1,6 @@
 # Virtual environments
 .venv/
+.venv312/
 venv/
 env/
 ENV/
@@ -68,6 +69,8 @@ Thumbs.db
 # Office lock / temp files
 myDocs/~$*
 myDocs/~WRL*.tmp
+myDocs/*.docx
+myDocs/*.mht
 **/~$*
 **/~WRL*.tmp
 
