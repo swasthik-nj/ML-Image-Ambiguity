@@ -1,5 +1,6 @@
 # Virtual environments
 .venv/
+.venv312/
 venv/
 env/
 ENV/
@@ -68,8 +69,19 @@ Thumbs.db
 # Office lock / temp files
 myDocs/~$*
 myDocs/~WRL*.tmp
+myDocs/*.docx
+myDocs/*.mht
+myDocs/ieee_paper/
 **/~$*
 **/~WRL*.tmp
 
 # Local tooling
 *.log
+
+# Frontend build artifacts
+frontend/.vite/
+frontend/node_modules/
+
+# Generated project outputs
+results/captions/
+results/uploads/
