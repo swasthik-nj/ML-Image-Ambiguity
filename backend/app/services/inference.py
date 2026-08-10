@@ -15,12 +15,19 @@ from PIL import Image
 from image_ambiguity.config import Settings, get_settings
 from image_ambiguity.data.coco_loader import CocoDatasetLoader
 from image_ambiguity.features.blip_captions import (
-    ALL_STRATEGIES,
+    BLIP_MODE_DIVERSE,
+    BLIP_MODE_STABLE,
     BlipCaptionGenerator,
+    flatten_strategy_captions,
 )
+from image_ambiguity.features.caption_clustering import cluster_captions_by_similarity
 from image_ambiguity.features.caption_diversity import CaptionDiversityAnalyzer
 from image_ambiguity.features.cv_features import OpenCVFeatureExtractor
 from image_ambiguity.features.sentence_embeddings import SentenceEmbeddingGenerator
+from image_ambiguity.features.visual_simplicity import (
+    VisualSimplicityConfig,
+    assess_visual_simplicity,
+)
 from image_ambiguity.logging_config import get_logger
 from image_ambiguity.models.trainer import FEATURE_COLUMNS, LABEL_ORDER, ModelTrainer
 from image_ambiguity.utils.common import ensure_dir
@@ -57,29 +64,7 @@ def parse_coco_image_id(filename: str | None) -> int | None:
 
 def flatten_blip_captions(generated: dict[str, list[str]]) -> list[str]:
     """Flatten BLIP strategy outputs into a unique ordered caption list."""
-    seen: set[str] = set()
-    captions: list[str] = []
-    # Prefer prompted captions first — they tend to be more diverse.
-    ordered_keys = ("prompted",) + tuple(
-        key for key in ALL_STRATEGIES if key in generated
-    )
-    for strategy in ordered_keys:
-        for caption in generated.get(strategy, []):
-            text = " ".join(str(caption).strip().split())
-            key = text.lower()
-            if text and key not in seen:
-                seen.add(key)
-                captions.append(text)
-    for strategy, items in generated.items():
-        if strategy in ordered_keys:
-            continue
-        for caption in items:
-            text = " ".join(str(caption).strip().split())
-            key = text.lower()
-            if text and key not in seen:
-                seen.add(key)
-                captions.append(text)
-    return captions
+    return flatten_strategy_captions(generated)
 
 
 class AmbiguityInferenceService:
@@ -97,10 +82,10 @@ class AmbiguityInferenceService:
         )
         self.blip_generator = BlipCaptionGenerator(
             device=self.settings.device,
-            num_return_sequences=4,
-            temperature=1.35,
-            top_p=0.85,
-            top_k=60,
+            num_return_sequences=self.settings.blip_diverse_num_return_sequences,
+            temperature=self.settings.blip_diverse_temperature,
+            top_p=self.settings.blip_diverse_top_p,
+            top_k=self.settings.blip_diverse_top_k,
         )
         self.trainer = ModelTrainer()
         self._model: Any | None = None
@@ -303,18 +288,95 @@ class AmbiguityInferenceService:
             raise FileNotFoundError(f"Unknown upload_id: {upload_id}")
         return image_matches[0]
 
-    def generate_captions(self, image_path: Path) -> list[str]:
-        """Generate diverse BLIP captions for an image."""
+    def visual_simplicity_config(self) -> VisualSimplicityConfig:
+        """Build visual-gate config from settings."""
+        return VisualSimplicityConfig(
+            enabled=self.settings.visual_gate_enabled,
+            edge_density_max=self.settings.visual_gate_edge_density_max,
+            entropy_max=self.settings.visual_gate_entropy_max,
+            texture_max=self.settings.visual_gate_texture_max,
+            contrast_max=self.settings.visual_gate_contrast_max,
+            color_variance_max=self.settings.visual_gate_color_variance_max,
+            brightness_min=self.settings.visual_gate_brightness_min,
+            min_simple_votes=self.settings.visual_gate_min_simple_votes,
+            min_vote_fraction=self.settings.visual_gate_min_vote_fraction,
+        )
+
+    def assess_image_simplicity(
+        self,
+        opencv: dict[str, float],
+    ) -> dict[str, Any]:
+        """Assess visual simplicity from OpenCV features (gating signal only)."""
+        assessment = assess_visual_simplicity(
+            opencv,
+            self.visual_simplicity_config(),
+        )
+        return assessment.to_dict()
+
+    def generate_captions(
+        self,
+        image_path: Path,
+        *,
+        mode: str = BLIP_MODE_DIVERSE,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Generate BLIP captions for an image in stable or diverse mode."""
         self._ensure_blip()
         with Image.open(image_path) as image:
             rgb = image.convert("RGB")
-            generated = self.blip_generator.generate_all(rgb)
+            generated = self.blip_generator.generate_for_mode(
+                rgb,
+                mode,
+                stable_num_beams=self.settings.blip_stable_num_beams,
+                stable_num_return_sequences=(
+                    self.settings.blip_stable_num_return_sequences
+                ),
+                stable_max_length=self.settings.blip_stable_max_length,
+                stable_use_mild_prompts=self.settings.blip_stable_use_mild_prompts,
+            )
         captions = flatten_blip_captions(generated)
         if len(captions) < 2:
             raise RuntimeError(
                 "BLIP produced fewer than 2 captions; cannot compute diversity"
             )
-        return captions
+        meta = {
+            "blip_mode": mode,
+            "n_raw_captions": len(captions),
+            "strategies": sorted(generated.keys()),
+        }
+        return captions, meta
+
+    def maybe_cluster_captions(
+        self,
+        captions: Sequence[str],
+        *,
+        apply: bool,
+    ) -> tuple[list[str], dict[str, Any]]:
+        """Optionally cluster captions by SBERT similarity before diversity."""
+        cleaned = [" ".join(str(c).strip().split()) for c in captions if str(c).strip()]
+        if not apply:
+            reps = list(cleaned)
+            if len(reps) == 1:
+                reps = [reps[0], reps[0]]
+            return reps, {
+                "representatives": reps,
+                "cluster_ids": list(range(len(cleaned))),
+                "n_input": len(cleaned),
+                "n_clusters": len(cleaned),
+                "similarity_threshold": float(
+                    self.settings.blip_cluster_similarity_threshold
+                ),
+                "applied": False,
+            }
+
+        self._ensure_embeddings()
+        embeddings = self.embedding_generator.generate_embeddings(cleaned)
+        clustered = cluster_captions_by_similarity(
+            cleaned,
+            embeddings,
+            similarity_threshold=self.settings.blip_cluster_similarity_threshold,
+            apply=True,
+        )
+        return clustered.representatives, clustered.to_dict()
 
     def resolve_captions(
         self,
@@ -323,20 +385,25 @@ class AmbiguityInferenceService:
         captions: Sequence[str] | None = None,
         upload_id: str | None = None,
         force_blip: bool = False,
-    ) -> tuple[list[str], str]:
+        visual_is_simple: bool = False,
+    ) -> tuple[list[str], str, dict[str, Any]]:
         """Choose user, COCO-human, or BLIP captions.
 
         Returns:
-            ``(captions, source)`` where source is ``user``, ``coco_human``,
-            or ``blip``.
+            ``(captions, source, meta)`` where source is ``user``,
+            ``coco_human``, or ``blip``.
         """
+        meta: dict[str, Any] = {
+            "blip_mode": None,
+            "clustering": None,
+        }
         if captions is not None and len(captions) >= 2:
-            return list(captions), "user"
+            return list(captions), "user", meta
 
         if not force_blip:
-            meta = self.read_upload_meta(upload_id) if upload_id else None
-            filename = (meta or {}).get("filename") or image_path.name
-            coco_captions = list((meta or {}).get("coco_captions") or [])
+            upload_meta = self.read_upload_meta(upload_id) if upload_id else None
+            filename = (upload_meta or {}).get("filename") or image_path.name
+            coco_captions = list((upload_meta or {}).get("coco_captions") or [])
             if len(coco_captions) < 2:
                 coco_captions = self.lookup_coco_captions(filename=str(filename))
             if len(coco_captions) >= 2:
@@ -345,9 +412,33 @@ class AmbiguityInferenceService:
                     len(coco_captions),
                     filename,
                 )
-                return coco_captions, "coco_human"
+                return coco_captions, "coco_human", meta
 
-        return self.generate_captions(image_path), "blip"
+        mode = BLIP_MODE_STABLE if visual_is_simple else BLIP_MODE_DIVERSE
+        blip_captions, blip_meta = self.generate_captions(image_path, mode=mode)
+        meta.update(blip_meta)
+
+        apply_cluster = (
+            self.settings.blip_cluster_when_simple
+            if visual_is_simple
+            else self.settings.blip_cluster_when_complex
+        )
+        clustered, cluster_meta = self.maybe_cluster_captions(
+            blip_captions,
+            apply=apply_cluster,
+        )
+        meta["clustering"] = cluster_meta
+        meta["n_captions_before_cluster"] = len(blip_captions)
+        meta["n_captions_after_cluster"] = len(clustered)
+        logger.info(
+            "BLIP mode=%s simple=%s cluster=%s raw=%s clustered=%s",
+            mode,
+            visual_is_simple,
+            apply_cluster,
+            len(blip_captions),
+            len(clustered),
+        )
+        return clustered, "blip", meta
 
     def compute_opencv_features(self, image_path: Path) -> dict[str, float]:
         """Extract the OpenCV features used by the classifier."""
@@ -400,20 +491,28 @@ class AmbiguityInferenceService:
         upload_id: str | None = None,
         force_blip: bool = False,
     ) -> dict[str, Any]:
-        """Return OpenCV + caption-diversity features for one image."""
-        resolved_captions, caption_source = self.resolve_captions(
+        """Return OpenCV + caption-diversity features for one image.
+
+        Visual simplicity only selects stable vs diverse BLIP and clustering.
+        It does not hardcode Low/Medium/High or change label thresholds.
+        """
+        opencv = self.compute_opencv_features(image_path)
+        visual = self.assess_image_simplicity(opencv)
+        resolved_captions, caption_source, caption_meta = self.resolve_captions(
             image_path,
             captions=captions,
             upload_id=upload_id,
             force_blip=force_blip,
+            visual_is_simple=bool(visual.get("is_simple")),
         )
-        opencv = self.compute_opencv_features(image_path)
         diversity = self.compute_diversity_features(resolved_captions)
         feature_row = self.build_feature_row(diversity=diversity, opencv=opencv)
         return {
             "image_path": str(image_path),
             "caption_source": caption_source,
             "opencv_features": opencv,
+            "visual_simplicity": visual,
+            "caption_pipeline": caption_meta,
             "caption_diversity": {
                 key: diversity[key]
                 for key in (
@@ -470,6 +569,8 @@ class AmbiguityInferenceService:
             "caption_source": features["caption_source"],
             "caption_diversity": features["caption_diversity"],
             "opencv_features": features["opencv_features"],
+            "visual_simplicity": features.get("visual_simplicity"),
+            "caption_pipeline": features.get("caption_pipeline"),
             "captions": features["captions"],
             "feature_vector": features["feature_vector"],
         }
@@ -512,3 +613,8 @@ class AmbiguityInferenceService:
 def get_inference_service() -> AmbiguityInferenceService:
     """Return a process-wide inference service singleton."""
     return AmbiguityInferenceService()
+
+
+def reset_inference_service() -> None:
+    """Clear the cached inference service (tests / config reloads)."""
+    get_inference_service.cache_clear()
