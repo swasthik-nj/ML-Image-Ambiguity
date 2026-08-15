@@ -67,10 +67,9 @@ class TestBlipCaptionGenerator:
         fake_inputs.items.return_value = [("pixel_values", MagicMock(to=MagicMock()))]
         fake_processor.side_effect = None
         fake_processor.return_value = fake_inputs
-        fake_processor.batch_decode.side_effect = [
-            ["a kitchen with a stove", "a person cooking food"],
-            ["people preparing a meal", "a busy kitchen scene"],
-            ["a cook stands near an oven", "food is being prepared"],
+        fake_processor.batch_decode.return_value = [
+            "a kitchen with a stove",
+            "a person cooking food",
         ]
 
         fake_model = MagicMock()
@@ -124,11 +123,10 @@ class TestBlipCaptionGenerator:
             )
 
         assert result.image_id == 397133
-        assert set(result.generated_captions) == {
-            "beam_search",
-            "top_k",
-            "nucleus",
-        }
+        assert "beam_search" in result.generated_captions
+        assert "top_k" in result.generated_captions
+        assert "nucleus" in result.generated_captions
+        assert "prompted" in result.generated_captions
         assert result.comparison is not None
         assert result.comparison.n_coco == 1
 
@@ -137,3 +135,35 @@ class TestBlipCaptionGenerator:
         text = out.read_text(encoding="utf-8")
         assert "generated_captions" in text
         assert "coco_captions" in text
+
+    def test_generate_for_mode_stable_skips_sampling(self) -> None:
+        generator = BlipCaptionGenerator(device="cpu", num_beams=2, num_return_sequences=2)
+        fake_processor = MagicMock()
+        fake_processor.batch_decode.return_value = ["a red apple", "an apple"]
+        fake_model = MagicMock()
+        fake_model.generate.return_value = MagicMock()
+        fake_torch = MagicMock()
+        fake_torch.inference_mode.return_value.__enter__ = MagicMock(return_value=None)
+        fake_torch.inference_mode.return_value.__exit__ = MagicMock(return_value=False)
+
+        generator.processor = fake_processor
+        generator.model = fake_model
+        generator._torch = fake_torch
+        generator.device = "cpu"
+
+        def _proc(**_kwargs):
+            tensor = MagicMock()
+            tensor.to.return_value = tensor
+            return {"pixel_values": tensor}
+
+        fake_processor.side_effect = _proc
+        image = Image.new("RGB", (32, 32), color=(255, 255, 255))
+        generated = generator.generate_for_mode(image, "stable")
+
+        assert "beam_search" in generated
+        assert "top_k" not in generated
+        assert "nucleus" not in generated
+        # Stable path should request non-sampling beam decode.
+        for call in fake_model.generate.call_args_list:
+            kwargs = call.kwargs
+            assert kwargs.get("do_sample") in (None, False)

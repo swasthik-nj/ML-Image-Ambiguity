@@ -38,6 +38,8 @@ export function PredictionPage() {
     [captionText],
   );
 
+  const isCoco = file ? /(?:^|[/\\])0*\d{1,12}\.(?:jpe?g|png|bmp|webp)$/i.test(file.name) : false;
+
   function onFileChange(next: File | null) {
     setFile(next);
     setResult(null);
@@ -56,7 +58,7 @@ export function PredictionPage() {
       setError("Choose an image to upload.");
       return;
     }
-    if (!useBlip && parsedCaptions.length < 2) {
+    if (isCoco && !useBlip && parsedCaptions.length < 2) {
       setError("Enter at least two captions, or enable BLIP generation.");
       return;
     }
@@ -66,17 +68,17 @@ export function PredictionPage() {
     try {
       const uploaded = await uploadImage(file);
       const cocoCaptions = uploaded.coco_captions ?? [];
-      let captionsForExplain = parsedCaptions;
-      const forceBlip = useBlip;
+      let captionsForExplain = isCoco ? parsedCaptions : undefined;
+      const forceBlip = isCoco ? useBlip : false;
 
-      if (!forceBlip && cocoCaptions.length >= 2) {
+      if (isCoco && !forceBlip && cocoCaptions.length >= 2) {
         captionsForExplain = cocoCaptions;
         setCaptionText(cocoCaptions.join("\n"));
       }
 
       const explained = await explainImage({
         uploadId: uploaded.upload_id,
-        captions: forceBlip ? undefined : captionsForExplain,
+        captions: captionsForExplain,
         forceBlip,
         topN: 8,
       });
@@ -149,27 +151,31 @@ export function PredictionPage() {
         </label>
 
         <div className="space-y-4">
-          <label className="flex items-center gap-2 text-sm text-ink/80">
-            <input
-              type="checkbox"
-              checked={useBlip}
-              onChange={(event) => setUseBlip(event.target.checked)}
-            />
-            Generate captions with BLIP (slower on CPU)
-          </label>
-
-          {!useBlip && (
-            <div>
-              <label className="mb-1 block text-sm font-medium text-ink/70">
-                Captions (one per line, min 2)
+          {isCoco && (
+            <>
+              <label className="flex items-center gap-2 text-sm text-ink/80">
+                <input
+                  type="checkbox"
+                  checked={useBlip}
+                  onChange={(event) => setUseBlip(event.target.checked)}
+                />
+                Generate captions with BLIP (slower on CPU)
               </label>
-              <textarea
-                value={captionText}
-                onChange={(event) => setCaptionText(event.target.value)}
-                rows={5}
-                className="w-full rounded-md border border-ink/15 bg-white px-3 py-2 text-sm text-ink outline-none ring-sea focus:ring-2"
-              />
-            </div>
+
+              {!useBlip && (
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-ink/70">
+                    Captions (one per line, min 2)
+                  </label>
+                  <textarea
+                    value={captionText}
+                    onChange={(event) => setCaptionText(event.target.value)}
+                    rows={5}
+                    className="w-full rounded-md border border-ink/15 bg-white px-3 py-2 text-sm text-ink outline-none ring-sea focus:ring-2"
+                  />
+                </div>
+              )}
+            </>
           )}
 
           <button
@@ -200,32 +206,36 @@ export function PredictionPage() {
               label="Confidence"
               value={`${(result.confidence * 100).toFixed(1)}%`}
             />
-            <Stat
-              label="Caption diversity"
-              value={result.caption_diversity.caption_diversity.toFixed(3)}
-            />
+            {result.caption_diversity && (
+              <Stat
+                label="Caption diversity"
+                value={result.caption_diversity.caption_diversity.toFixed(3)}
+              />
+            )}
           </div>
 
-          <section className="rounded-md border border-ink/10 bg-white/70 p-4">
-            <h2 className="font-display text-xl font-bold text-ink">
-              Generated captions
-            </h2>
-            {result.caption_source && (
-              <p className="mt-1 text-xs text-ink/50">
-                Source:{" "}
-                {result.caption_source === "coco_human"
-                  ? "COCO human captions"
-                  : result.caption_source === "blip"
-                    ? "BLIP (AI)"
-                    : "user-provided"}
-              </p>
-            )}
-            <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-ink/75">
-              {result.captions.map((caption) => (
-                <li key={caption}>{caption}</li>
-              ))}
-            </ol>
-          </section>
+          {result.captions && result.captions.length > 0 && (
+            <section className="rounded-md border border-ink/10 bg-white/70 p-4">
+              <h2 className="font-display text-xl font-bold text-ink">
+                Generated captions
+              </h2>
+              {result.caption_source && (
+                <p className="mt-1 text-xs text-ink/50">
+                  Source:{" "}
+                  {result.caption_source === "coco_human"
+                    ? "COCO human captions"
+                    : result.caption_source === "blip"
+                      ? "BLIP (AI)"
+                      : "user-provided"}
+                </p>
+              )}
+              <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-ink/75">
+                {result.captions.map((caption) => (
+                  <li key={caption}>{caption}</li>
+                ))}
+              </ol>
+            </section>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-2">
             <ChartPanel title="Class probabilities (%)">

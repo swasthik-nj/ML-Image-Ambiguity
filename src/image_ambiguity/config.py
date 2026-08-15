@@ -103,6 +103,30 @@ class Settings(BaseSettings):
     device: str = "auto"
     embedding_batch_size: int = Field(default=32, ge=1)
 
+    # Visual gate (BLIP mode selection only — does not redefine labels)
+    visual_gate_enabled: bool = True
+    visual_gate_edge_density_max: float = 0.040
+    visual_gate_entropy_max: float = 7.25
+    visual_gate_texture_max: float = 900.0
+    visual_gate_contrast_max: float = 55.0
+    visual_gate_color_variance_max: float = 3200.0
+    visual_gate_brightness_min: float | None = 165.0
+    visual_gate_min_simple_votes: int = Field(default=3, ge=1)
+    visual_gate_min_vote_fraction: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # BLIP inference modes
+    blip_stable_num_beams: int = Field(default=5, ge=1)
+    blip_stable_num_return_sequences: int = Field(default=3, ge=1)
+    blip_stable_max_length: int = Field(default=40, ge=1)
+    blip_stable_use_mild_prompts: bool = True
+    blip_diverse_num_return_sequences: int = Field(default=4, ge=1)
+    blip_diverse_temperature: float = Field(default=1.35, gt=0.0)
+    blip_diverse_top_p: float = Field(default=0.85, gt=0.0, le=1.0)
+    blip_diverse_top_k: int = Field(default=60, ge=1)
+    blip_cluster_similarity_threshold: float = Field(default=0.85, gt=0.0, le=1.0)
+    blip_cluster_when_simple: bool = True
+    blip_cluster_when_complex: bool = False
+
     @field_validator(
         "project_root",
         "config_path",

@@ -23,6 +23,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     accuracy_score,
+    confusion_matrix,
     f1_score,
     precision_score,
     recall_score,
@@ -114,9 +115,10 @@ class ModelTrainer:
     def __init__(
         self,
         *,
+        feature_columns: tuple[str, ...] | list[str] | None = None,
         test_size: float = 0.2,
         cv_folds: int = 5,
-        scoring: str = "accuracy",
+        scoring: str = "f1_macro",
         random_state: int = 42,
         balance_classes: bool = True,
     ) -> None:
@@ -125,6 +127,7 @@ class ModelTrainer:
         if cv_folds < 2:
             raise ValueError(f"cv_folds must be >= 2, got {cv_folds}")
 
+        self.feature_columns = tuple(feature_columns) if feature_columns is not None else self.FEATURE_COLUMNS
         self.test_size = test_size
         self.cv_folds = cv_folds
         self.scoring = scoring
@@ -174,7 +177,7 @@ class ModelTrainer:
             KeyError: If required feature or target columns are missing.
             ValueError: If no labeled rows remain after filtering.
         """
-        missing_features = [c for c in self.FEATURE_COLUMNS if c not in df.columns]
+        missing_features = [c for c in self.feature_columns if c not in df.columns]
         if missing_features:
             raise KeyError(f"Missing feature column(s): {missing_features}")
         if self.TARGET_COLUMN not in df.columns:
@@ -184,7 +187,7 @@ class ModelTrainer:
         if data.empty:
             raise ValueError("No rows with a valid ambiguity_label to train on")
 
-        X = data[list(self.FEATURE_COLUMNS)].astype(float)
+        X = data[list(self.feature_columns)].astype(float)
         if X.isna().any().any():
             logger.warning("Imputing missing feature values with column medians")
             X = X.fillna(X.median())
@@ -255,7 +258,7 @@ class ModelTrainer:
         if name == "random_forest":
             params: dict[str, Any] = {
                 "random_state": self.random_state,
-                "n_jobs": -1,
+                "n_jobs": 1,
                 "class_weight": "balanced" if self.balance_classes else None,
             }
             params.update(overrides)
@@ -266,7 +269,7 @@ class ModelTrainer:
             params = {
                 "random_state": self.random_state,
                 "eval_metric": "mlogloss",
-                "n_jobs": -1,
+                "n_jobs": 1,
             }
             params.update(overrides)
             return XGBClassifier(**params)
@@ -333,9 +336,10 @@ class ModelTrainer:
 
         estimator = self._build_estimator(name)
         cv = StratifiedKFold(n_splits=folds, shuffle=True, random_state=self.random_state)
-        with timed(f"cross_validate_baseline:{name}"):
+        with warnings.catch_warnings(), timed(f"cross_validate_baseline:{name}"):
+            warnings.simplefilter("ignore", category=UserWarning)
             scores = cross_val_score(
-                estimator, X_train, y_train, cv=cv, scoring="accuracy", n_jobs=-1
+                estimator, X_train, y_train, cv=cv, scoring="accuracy", n_jobs=None
             )
         mean_score = float(np.mean(scores))
         logger.info(
@@ -382,7 +386,7 @@ class ModelTrainer:
             param_grid=PARAM_GRIDS[name],
             cv=cv,
             scoring=self.scoring,
-            n_jobs=-1,
+            n_jobs=None,  # Disabled multiprocessing to fix joblib serialization on Windows
             refit=True,
         )
         with warnings.catch_warnings(), timed(f"tune_hyperparameters:{name}"):
@@ -435,7 +439,19 @@ class ModelTrainer:
             ),
             "f1": float(f1_score(y_test, predictions, average="macro", zero_division=0)),
             "roc_auc": None,
+            "confusion_matrix": confusion_matrix(y_test, predictions).tolist(),
         }
+
+        # Per-class metrics
+        per_class_precision = precision_score(y_test, predictions, average=None, zero_division=0)
+        per_class_recall = recall_score(y_test, predictions, average=None, zero_division=0)
+        per_class_f1 = f1_score(y_test, predictions, average=None, zero_division=0)
+        
+        for i, label in enumerate(model.classes_):
+            label_name = LABEL_ORDER[label]
+            metrics[f"precision_{label_name}"] = float(per_class_precision[i])
+            metrics[f"recall_{label_name}"] = float(per_class_recall[i])
+            metrics[f"f1_{label_name}"] = float(per_class_f1[i])
 
         if hasattr(model, "predict_proba"):
             try:
@@ -477,7 +493,7 @@ class ModelTrainer:
             (1 - self.test_size) * 100,
             self.test_size * 100,
         )
-        X_train, y_train = self.balance_training_data(X_train, y_train)
+        # X_train, y_train = self.balance_training_data(X_train, y_train)
 
         results: dict[str, ModelResult] = {}
         for name in PARAM_GRIDS:

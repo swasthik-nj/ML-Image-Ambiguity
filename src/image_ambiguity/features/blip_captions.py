@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from PIL import Image
 
@@ -36,6 +36,15 @@ DIVERSITY_PROMPTS: tuple[str, ...] = (
     "this picture shows",
     "a scene with",
 )
+
+# Mild prompts for stable (non-sampling) generation on visually simple images.
+STABLE_PROMPTS: tuple[str, ...] = (
+    "",
+    "a photo of",
+)
+
+BLIP_MODE_STABLE = "stable"
+BLIP_MODE_DIVERSE = "diverse"
 
 
 @dataclass(slots=True)
@@ -98,6 +107,30 @@ def word_jaccard(a: str, b: str) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+def flatten_strategy_captions(generated: dict[str, list[str]]) -> list[str]:
+    """Flatten BLIP strategy outputs into a unique ordered caption list."""
+    seen: set[str] = set()
+    captions: list[str] = []
+    preferred = (
+        "prompted",
+        "stable_prompted",
+        STRATEGY_BEAM,
+        STRATEGY_TOP_K,
+        STRATEGY_NUCLEUS,
+    )
+    ordered_keys = tuple(key for key in preferred if key in generated) + tuple(
+        key for key in generated if key not in preferred
+    )
+    for strategy in ordered_keys:
+        for caption in generated.get(strategy, []):
+            text = " ".join(str(caption).strip().split())
+            key = text.lower()
+            if text and key not in seen:
+                seen.add(key)
+                captions.append(text)
+    return captions
 
 
 def compare_with_coco(
@@ -356,7 +389,40 @@ class BlipCaptionGenerator:
                     num_return_sequences=1,
                 )
             captions.extend(self._decode(sequences))
-        # Re-dedupe across prompts.
+        return self._dedupe(captions)
+
+    def generate_prompted_stable(
+        self,
+        image: Image.Image,
+        *,
+        prompts: Sequence[str] | None = None,
+        num_beams: int | None = None,
+        num_return_sequences: int | None = None,
+        max_length: int | None = None,
+    ) -> list[str]:
+        """Beam-search captions with mild prompts (no sampling)."""
+        _, model, torch = self._require_model()
+        prompt_list = list(prompts) if prompts is not None else list(STABLE_PROMPTS)
+        beams = int(num_beams or self.num_beams)
+        returns = int(num_return_sequences or self.num_return_sequences)
+        length = int(max_length or self.max_length)
+        captions: list[str] = []
+        for prompt in prompt_list:
+            inputs = self._prepare_inputs(image, text=prompt or None)
+            with torch.inference_mode():
+                sequences = model.generate(
+                    **inputs,
+                    max_length=length,
+                    num_beams=max(beams, returns),
+                    num_return_sequences=min(returns, max(beams, returns)),
+                    do_sample=False,
+                    early_stopping=True,
+                )
+            captions.extend(self._decode(sequences))
+        return self._dedupe(captions)
+
+    @staticmethod
+    def _dedupe(captions: list[str]) -> list[str]:
         seen: set[str] = set()
         unique: list[str] = []
         for caption in captions:
@@ -367,17 +433,71 @@ class BlipCaptionGenerator:
             unique.append(caption)
         return unique
 
+    def generate_stable(
+        self,
+        image: Image.Image,
+        *,
+        num_beams: int | None = None,
+        num_return_sequences: int | None = None,
+        max_length: int | None = None,
+        use_mild_prompts: bool = True,
+        prompts: Sequence[str] | None = None,
+    ) -> dict[str, list[str]]:
+        """Deterministic captions for visually simple images.
+
+        Uses beam search only (no top-k / nucleus sampling). Optionally adds
+        a small set of mild prompted beam captions.
+        """
+        beams = int(num_beams or self.num_beams)
+        returns = int(num_return_sequences or min(3, self.num_return_sequences))
+        length = int(max_length or self.max_length)
+
+        # Temporarily adjust beam settings for this call.
+        old_beams, old_returns, old_length = (
+            self.num_beams,
+            self.num_return_sequences,
+            self.max_length,
+        )
+        self.num_beams = max(beams, returns)
+        self.num_return_sequences = returns
+        self.max_length = length
+        try:
+            with timed("blip_generate:stable_beam"):
+                beam_captions = self.generate_beam_search(image)
+            results: dict[str, list[str]] = {STRATEGY_BEAM: beam_captions}
+            if use_mild_prompts:
+                with timed("blip_generate:stable_prompted"):
+                    results["stable_prompted"] = self.generate_prompted_stable(
+                        image,
+                        prompts=prompts,
+                        num_beams=beams,
+                        num_return_sequences=max(1, returns // 2 or 1),
+                        max_length=length,
+                    )
+        finally:
+            self.num_beams = old_beams
+            self.num_return_sequences = old_returns
+            self.max_length = old_length
+
+        logger.info(
+            "Stable BLIP produced %s unique caption(s)",
+            len(flatten_strategy_captions(results)),
+        )
+        return results
+
     def generate_all(
         self,
         image: Image.Image,
         *,
         strategies: tuple[str, ...] = ALL_STRATEGIES,
+        include_prompted: bool = True,
     ) -> dict[str, list[str]]:
         """Run all requested decoding strategies on one image.
 
         Args:
             image: RGB PIL image.
             strategies: Subset of ``beam_search``, ``top_k``, ``nucleus``.
+            include_prompted: When true, also run diverse prompted sampling.
 
         Returns:
             Mapping of strategy name → list of caption strings.
@@ -400,13 +520,43 @@ class BlipCaptionGenerator:
                 strategy,
                 len(results[strategy]),
             )
-        with timed("blip_generate:prompted"):
-            results["prompted"] = self.generate_prompted(image)
-        logger.info(
-            "Strategy prompted produced %s caption(s)",
-            len(results["prompted"]),
-        )
+        if include_prompted:
+            with timed("blip_generate:prompted"):
+                results["prompted"] = self.generate_prompted(image)
+            logger.info(
+                "Strategy prompted produced %s caption(s)",
+                len(results["prompted"]),
+            )
         return results
+
+    def generate_for_mode(
+        self,
+        image: Image.Image,
+        mode: str,
+        *,
+        stable_num_beams: int | None = None,
+        stable_num_return_sequences: int | None = None,
+        stable_max_length: int | None = None,
+        stable_use_mild_prompts: bool = True,
+        stable_prompts: Sequence[str] | None = None,
+    ) -> dict[str, list[str]]:
+        """Dispatch to stable or diverse BLIP generation."""
+        normalized = (mode or BLIP_MODE_DIVERSE).strip().lower()
+        if normalized == BLIP_MODE_STABLE:
+            return self.generate_stable(
+                image,
+                num_beams=stable_num_beams,
+                num_return_sequences=stable_num_return_sequences,
+                max_length=stable_max_length,
+                use_mild_prompts=stable_use_mild_prompts,
+                prompts=stable_prompts,
+            )
+        if normalized != BLIP_MODE_DIVERSE:
+            raise ValueError(
+                f"Unknown BLIP mode '{mode}'. "
+                f"Expected '{BLIP_MODE_STABLE}' or '{BLIP_MODE_DIVERSE}'."
+            )
+        return self.generate_all(image, include_prompted=True)
 
     def caption_image(
         self,
